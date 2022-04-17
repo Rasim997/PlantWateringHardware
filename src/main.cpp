@@ -12,13 +12,15 @@
 //Sensor Library
 #include <DHT.h>
 #include <math.h>
+#include <time.h>
 
 #define dhtSensor 33
 #define sSensor 32
-#define mRelay 15
+#define mRelay 26
 DHT dht(dhtSensor,DHT11);
 Preferences preferences;
 WebServer server(80);
+HTTPClient httpClient;
 
 //check the Wifi Mode
 bool isAP(IPAddress ip){
@@ -167,6 +169,64 @@ void sensorData(){
  
                 server.send(200, F("application/json"), buf);
 }
+//get Data From API
+String apiDataGet(){
+  String serverPath = "http://api.weatherapi.com/v1/current.json?key=e839e0772ccb45a4a96140209220404&q=m95pl&aqi=no";
+        
+  // Your Domain name with URL path or IP address with path
+  httpClient.begin(serverPath);
+  // Send HTTP GET request
+  int httpResponseCode = httpClient.GET();
+        
+  if (httpResponseCode>0) {
+    String payload = httpClient.getString();
+    return payload;
+  }
+  else {
+    Serial.print("Error getting data. Error code: ");
+    Serial.println(httpResponseCode);
+    return "error";
+  }
+  // Free resources
+  httpClient.end();
+
+}
+
+//Send API data to app
+void apiDataSend(){
+  String buf = apiDataGet();
+    server.send(200,F("application/json"),buf);
+}
+//get time
+void getDevTime(){
+  time_t now;
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+  }
+  // Serial.print(&timeinfo);
+  // Serial.print(" ");
+  // Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+  time(&now);
+  Serial.println(now);
+}
+//TEST JSON DATA PARSE
+void JSON(){
+  DynamicJsonDocument doc(1536);
+  DeserializationError error = deserializeJson(doc, apiDataGet());
+
+if (error) {
+  Serial.print("deserializeJson() failed: ");
+  Serial.println(error.c_str());
+  return;
+}
+JsonObject current_condition = doc["current"]["condition"];
+const char* current_condition_text = current_condition["text"];
+const char* current_condition_icon = current_condition["icon"];
+String buf;
+serializeJson(current_condition,buf);
+server.send(200,F("application/json"),buf);
+}
 // Manage not found URL
 void handleNotFound() {
   String message = "File Not Found\n\n";
@@ -186,10 +246,13 @@ void handleNotFound() {
 void restServerRouting() {
     server.on("/", HTTP_GET,checkPulse);
     server.on(F("/reset"), HTTP_GET,reset);
-    
     server.on(F("/connect"),HTTP_POST,wifiInfo);
     server.on(F("/sleep"),HTTP_GET,enDeepSleep);
     server.on(F("/sensors"),HTTP_GET,sensorData);
+    server.on(F("/weather"),HTTP_GET,apiDataSend);
+    server.on(F("/time"),HTTP_GET,getDevTime);
+    server.on(F("/json"),HTTP_GET,JSON);
+
 }
 
 void setup() {
@@ -213,15 +276,7 @@ void setup() {
   // Start server
   server.begin();
   Serial.println("HTTP server started");
-  preferences.begin("flags",false);
-  
-  if(preferences.getBool("sleep")==true)
-  {
-    Serial.println("Im Awake");
-    preferences.putBool("sleep",false);
-    
-  }
-  preferences.end();
+  configTime(0, 0, "pool.ntp.org");
 }
 
 void loop() {
