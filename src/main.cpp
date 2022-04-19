@@ -30,7 +30,6 @@ bool wateringFlag = false;
 //Preferences
 int moisturePercentage= 0;
 int timerInterval = 0;
-int weatherCode=0;
 
 //check the Wifi Mode
 bool isAP(IPAddress ip){
@@ -98,7 +97,7 @@ void wifiInfo(){
 
 
                 //creating data to send as a response to the main thing 
-                DynamicJsonDocument doc(512);
+                DynamicJsonDocument doc(64);
                 //populating the json Object
                 doc["ssid"] = ssid;
                 doc["password"] = pass;
@@ -110,7 +109,7 @@ void wifiInfo(){
                 delay(1000);
                 ESP.restart();
             }else {
-                DynamicJsonDocument doc(512);
+                DynamicJsonDocument doc(64);
                 doc["status"] = "KO";
                 doc["message"] = F("No data found, or incorrect!");
  
@@ -168,7 +167,7 @@ void sensorData(){
   float humidity = dht.readHumidity();
   float temprature = round(dht.readTemperature());
 
-  DynamicJsonDocument doc(512);
+  DynamicJsonDocument doc(64);
                 //populating the json Object
                 doc["Soil_Moisture"] = soilMoisture;
                 doc["Humidity"] = humidity;
@@ -214,7 +213,7 @@ void algorithmControl(){
   }
   else{
     String postBody = server.arg("plain");
-    DynamicJsonDocument doc(64);
+    DynamicJsonDocument doc(512);
     DeserializationError parsingError = deserializeJson(doc, postBody);
 
     //if there is error in the recieved json object
@@ -234,12 +233,19 @@ void algorithmControl(){
                 timerInterval= doc["timeInterval"];
                 activateSystem= doc["activateSystem"];
                 moisturePercentage = doc["moisture"];
+                preferences.begin("settings");
+                preferences.putInt("soilMoisture",moisturePercentage);
+                preferences.putDouble("timerInterval",timerInterval);
+                preferences.putBool("activateSystem", activateSystem);
+                preferences.end();
 
-                  Serial.println("DID");
-                  timer.stop();
+                Serial.println("DID");
+                timer.stop();
+                Watering.stop();
+                WaitTimer.stop();
 
                 //creating data to send as a response to the main thing 
-                DynamicJsonDocument doc(64);
+                DynamicJsonDocument doc(512);
                 //populating the json Object
                 doc["Time Interval"] = timerInterval;
                 doc["System Activation"] = activateSystem; 
@@ -252,7 +258,7 @@ void algorithmControl(){
                 server.send(201, F("application/json"), buf);
                 delay(1000);
             }else {
-                DynamicJsonDocument doc(512);
+                DynamicJsonDocument doc(64);
                 doc["status"] = "KO";
                 doc["message"] = F("No data found, or incorrect!");
  
@@ -286,10 +292,12 @@ void wateringAlgorithm(){
         if(map(analogRead(sSensor),3500,0,1,100)<=moisturePercentage){
           DynamicJsonDocument doc(64);
           deserializeJson(doc, apiDataGet());
-          weatherCode = doc["current"]["condition"]["code"];
+          int weatherCode = doc["current"]["condition"]["code"];
+          Serial.println(weatherCode);
           //if its not going to rain
-          if (weatherCode !=(1063||1180||1183||1186||1189||1192||1195||1198||1201||1204||1240||1243||1246||1273||1276)){
-            wateringFlag==true;
+          if (weatherCode !=1063||weatherCode !=1180||weatherCode !=1183||weatherCode !=1186||weatherCode !=1189||weatherCode !=1192||weatherCode !=1195||weatherCode !=1198||weatherCode !=1201||weatherCode !=1204||weatherCode !=1240||weatherCode !=1243||weatherCode !=1246||weatherCode !=1273||weatherCode !=1276){
+            wateringFlag=true;
+            Serial.println("watering flag set");
           }
         }
       }
@@ -299,27 +307,41 @@ void wateringAlgorithm(){
     {
       //get the moisture reading and if its lower than whats needed 
       int currwaterLevel=map(analogRead(sSensor),3500,0,1,100);
-      if(currwaterLevel >= moisturePercentage){
+      if(currwaterLevel < moisturePercentage){
         //check if the pump is not already running
         if(Watering.state()==STOPPED){
           Watering.start();
-          digitalWrite(mRelay,HIGH);
+          digitalWrite(mRelay,LOW);
+          Serial.println("starting Watering");
         }
         //if the pump is running already
         else{
           if(Watering.read()>=5000)
           {
             Watering.stop();
-            digitalWrite(mRelay,LOW);
+            digitalWrite(mRelay,HIGH);
+            Serial.println("Stopping Watering");
             WaitTimer.start();
           }
         }
+      }
+      else{
+        Watering.stop();
+        digitalWrite(mRelay,LOW);
+        Serial.println("Stopping Watering");
+        WaitTimer.start();
       }
     }
     //if the wait timer is running and the time is elapsed then turn it off
     if(WaitTimer.state()==RUNNING){
       if(WaitTimer.read()>=5000){
+        Serial.println("Stopping wait timer");
         WaitTimer.stop();
+        if(map(analogRead(sSensor),3500,0,1,100)>=moisturePercentage){
+          wateringFlag=false;
+          Serial.println("Watering Stopped");
+          digitalWrite(mRelay,HIGH);
+        }
       }
     }
   }
@@ -355,6 +377,7 @@ void setup() {
   Serial.begin(115200);
   dht.begin();
   pinMode(mRelay,OUTPUT);
+  digitalWrite(mRelay,HIGH);
   preferences.begin("credentials", true);
   String ssid = preferences.getString("ssid","0");
   String pass = preferences.getString("password","0");
@@ -373,10 +396,18 @@ void setup() {
   server.begin();
   Serial.println("HTTP server started");
   configTime(0, 0, "pool.ntp.org");
+  preferences.begin("settings");
+  moisturePercentage = preferences.getInt("soilMoisture",60);
+  timerInterval = preferences.getDouble("timerInterval",3.6e+6);
+  activateSystem = preferences.getBool("activateSystem",false);
+  preferences.end();
+  Serial.println(moisturePercentage);
+  Serial.println(timerInterval);
 
 }
 
 void loop() {
   server.handleClient();
   wateringAlgorithm();
+  //Serial.println(map(analogRead(sSensor),3500,0,1,100));
 }
