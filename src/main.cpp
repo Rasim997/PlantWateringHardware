@@ -12,7 +12,7 @@
 //Sensor Library
 #include <DHT.h>
 #include <math.h>
-#include <time.h>
+#include <Timer.h>
 
 #define dhtSensor 33
 #define sSensor 32
@@ -21,6 +21,16 @@ DHT dht(dhtSensor,DHT11);
 Preferences preferences;
 WebServer server(80);
 HTTPClient httpClient;
+Timer timer(MILLIS);
+Timer Watering(MILLIS);
+Timer WaitTimer(MILLIS);
+//Flags
+bool activateSystem = false;
+bool wateringFlag = false;
+//Preferences
+int moisturePercentage= 0;
+int timerInterval = 0;
+int weatherCode=0;
 
 //check the Wifi Mode
 bool isAP(IPAddress ip){
@@ -191,41 +201,128 @@ String apiDataGet(){
   httpClient.end();
 
 }
-
 //Send API data to app
 void apiDataSend(){
   String buf = apiDataGet();
     server.send(200,F("application/json"),buf);
 }
-//get time
-void getDevTime(){
-  time_t now;
-  struct tm timeinfo;
-  if(!getLocalTime(&timeinfo)){
-    Serial.println("Failed to obtain time");
+//controling the api
+void algorithmControl(){
+  if(isAP(WiFi.localIP())==true)
+  {
+    server.send(403, F("text/json"),"Forbidden - Request can not be fulfilled");
   }
-  // Serial.print(&timeinfo);
-  // Serial.print(" ");
-  // Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
-  time(&now);
-  Serial.println(now);
-}
-//TEST JSON DATA PARSE
-void JSON(){
-  DynamicJsonDocument doc(1536);
-  DeserializationError error = deserializeJson(doc, apiDataGet());
+  else{
+    String postBody = server.arg("plain");
+    DynamicJsonDocument doc(64);
+    DeserializationError parsingError = deserializeJson(doc, postBody);
 
-if (error) {
-  Serial.print("deserializeJson() failed: ");
-  Serial.println(error.c_str());
-  return;
+    //if there is error in the recieved json object
+    if (parsingError) {
+        String msg = parsingError.c_str();
+        server.send(400, F("text/json"),"Error in parsin json body!" + msg);
+ 
+    } 
+    //if the object is able to be parsed
+    else {
+      //create a json object
+        JsonObject postObj = doc.as<JsonObject>();
+        //if the method is post
+        if (server.method() == HTTP_POST) {
+          //if the post request has whats needed
+            if (postObj.containsKey("activateSystem")&&postObj.containsKey("timeInterval")&&postObj.containsKey("moisture")) {
+                timerInterval= doc["timeInterval"];
+                activateSystem= doc["activateSystem"];
+                moisturePercentage = doc["moisture"];
+
+                  Serial.println("DID");
+                  timer.stop();
+
+                //creating data to send as a response to the main thing 
+                DynamicJsonDocument doc(64);
+                //populating the json Object
+                doc["Time Interval"] = timerInterval;
+                doc["System Activation"] = activateSystem; 
+                doc["soil Moisture Content"] = moisturePercentage;
+                
+                String buf;
+                //serialising data
+                serializeJson(doc, buf);
+ 
+                server.send(201, F("application/json"), buf);
+                delay(1000);
+            }else {
+                DynamicJsonDocument doc(512);
+                doc["status"] = "KO";
+                doc["message"] = F("No data found, or incorrect!");
+ 
+                Serial.print(F("Stream..."));
+                String buf;
+                serializeJson(doc, buf);
+ 
+                server.send(400, F("application/json"), buf);
+                Serial.print(F("done."));
+            }
+        }
+    }
+  }
 }
-JsonObject current_condition = doc["current"]["condition"];
-const char* current_condition_text = current_condition["text"];
-const char* current_condition_icon = current_condition["icon"];
-String buf;
-serializeJson(current_condition,buf);
-server.send(200,F("application/json"),buf);
+//watering algorithm
+void wateringAlgorithm(){
+  if(activateSystem==true && moisturePercentage>0 && timerInterval>1000)
+  {
+    //if the timer is not running and the device is not currently watering the plant.
+    if(timer.state()==STOPPED&&wateringFlag==false){
+    Serial.println("Timer Started");
+    timer.start();
+    }
+    //if the timer is running
+    if (timer.state()==RUNNING){
+      //check if the timer is elapsed
+      if(timer.read()==timerInterval){
+        Serial.println("Timer Time Reached");
+        timer.stop();
+        //if the soil moisture level is low
+        if(map(analogRead(sSensor),3500,0,1,100)<=moisturePercentage){
+          DynamicJsonDocument doc(64);
+          deserializeJson(doc, apiDataGet());
+          weatherCode = doc["current"]["condition"]["code"];
+          //if its not going to rain
+          if (weatherCode !=(1063||1180||1183||1186||1189||1192||1195||1198||1201||1204||1240||1243||1246||1273||1276)){
+            wateringFlag==true;
+          }
+        }
+      }
+    }
+    //if the watering flag is set
+    if(wateringFlag==true&&WaitTimer.state()==STOPPED)
+    {
+      //get the moisture reading and if its lower than whats needed 
+      int currwaterLevel=map(analogRead(sSensor),3500,0,1,100);
+      if(currwaterLevel >= moisturePercentage){
+        //check if the pump is not already running
+        if(Watering.state()==STOPPED){
+          Watering.start();
+          digitalWrite(mRelay,HIGH);
+        }
+        //if the pump is running already
+        else{
+          if(Watering.read()>=5000)
+          {
+            Watering.stop();
+            digitalWrite(mRelay,LOW);
+            WaitTimer.start();
+          }
+        }
+      }
+    }
+    //if the wait timer is running and the time is elapsed then turn it off
+    if(WaitTimer.state()==RUNNING){
+      if(WaitTimer.read()>=5000){
+        WaitTimer.stop();
+      }
+    }
+  }
 }
 // Manage not found URL
 void handleNotFound() {
@@ -250,8 +347,7 @@ void restServerRouting() {
     server.on(F("/sleep"),HTTP_GET,enDeepSleep);
     server.on(F("/sensors"),HTTP_GET,sensorData);
     server.on(F("/weather"),HTTP_GET,apiDataSend);
-    server.on(F("/time"),HTTP_GET,getDevTime);
-    server.on(F("/json"),HTTP_GET,JSON);
+    server.on(F("/startSystem"),HTTP_POST,algorithmControl);
 
 }
 
@@ -277,8 +373,10 @@ void setup() {
   server.begin();
   Serial.println("HTTP server started");
   configTime(0, 0, "pool.ntp.org");
+
 }
 
 void loop() {
   server.handleClient();
+  wateringAlgorithm();
 }
