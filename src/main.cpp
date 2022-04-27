@@ -13,11 +13,12 @@
 #include <DHT.h>
 #include <math.h>
 #include <Timer.h>
-
+//defining sensorpins
 #define dhtSensor 33
 #define sSensor 32
 #define mRelay 26
-DHT dht(dhtSensor,DHT11);
+//init library objects
+DHT dht(dhtSensor,DHT22);
 Preferences preferences;
 WebServer server(80);
 HTTPClient httpClient;
@@ -39,6 +40,12 @@ bool isAP(IPAddress ip){
 //reset the server
 void reset(){
   preferences.begin("credentials", false);
+  preferences.clear();
+  preferences.end();
+  preferences.begin("flags", false);
+  preferences.clear();
+  preferences.end();
+  preferences.begin("settings", false);
   preferences.clear();
   preferences.end();
   Serial.println("Device Reset Completed");
@@ -101,6 +108,7 @@ void wifiInfo(){
                 //populating the json Object
                 doc["ssid"] = ssid;
                 doc["password"] = pass;
+                doc["hostname"] = String((uint32_t)ESP.getEfuseMac(), HEX);
                 String buf;
                 //serialising data
                 serializeJson(doc, buf);
@@ -139,9 +147,17 @@ void handleConnection(String ssid, String pass){
     WiFi.begin(s, p);
     Serial.println("");
     // Wait for connection
+    int connecting = 0 ;
     while (WiFi.status() != WL_CONNECTED) {
       delay(500);
       Serial.print(".");
+      connecting = connecting+1;
+      if(connecting == 15){
+        preferences.begin("credentials", false);
+        preferences.clear();
+        preferences.end();
+        ESP.restart();
+      }
     }
     Serial.println("");
     Serial.print("Connected to ");
@@ -385,8 +401,10 @@ void setup() {
   handleConnection(ssid,pass);
 
   //assigning a hostname to the device
-  if (MDNS.begin("esp32")) {
+  String chipId = String((uint32_t)ESP.getEfuseMac(), HEX);
+  if (MDNS.begin(chipId.c_str())) {
     Serial.println("MDNS responder started");
+    Serial.println(chipId);
   }
   // Set server routing
   restServerRouting();
