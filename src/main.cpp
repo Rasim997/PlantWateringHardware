@@ -102,13 +102,33 @@ void wifiInfo(){
                 Serial.println("Network Credentials Saved");
                 preferences.end();
 
+                WiFi.mode(WIFI_AP_STA);
+                WiFi.begin(ssid, pass);
+                Serial.println("");
+                // Wait for connection
+                int connecting = 0 ;
+                while (WiFi.status() != WL_CONNECTED) {
+                  delay(500);
+                  Serial.print(".");
+                  Serial.print(",");
+                  connecting = connecting+1;
+                  if(connecting == 30){
+                    preferences.begin("credentials", false);
+                    preferences.clear();
+                    preferences.end();
+                    server.send(404,"text/plain","notFound");
+                    ESP.restart();
+                  }
+                }
+
 
                 //creating data to send as a response to the main thing 
-                DynamicJsonDocument doc(64);
+                DynamicJsonDocument doc(512);
                 //populating the json Object
                 doc["ssid"] = ssid;
                 doc["password"] = pass;
                 doc["hostname"] = String((uint32_t)ESP.getEfuseMac(), HEX);
+                doc["ip"]=WiFi.localIP();
                 String buf;
                 //serialising data
                 serializeJson(doc, buf);
@@ -136,7 +156,7 @@ void wifiInfo(){
 void handleConnection(String ssid, String pass){
   if(ssid=="0"){
     WiFi.mode(WIFI_AP);
-    WiFi.softAP("PlantWatering", "123456789");
+    WiFi.softAP("ESP32PWS");
     Serial.print(ssid);
     Serial.println(WiFi.localIP());
   }
