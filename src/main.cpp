@@ -188,13 +188,57 @@ void handleConnection(String ssid, String pass){
 }
 //deepSleep
 void enDeepSleep(){
-  preferences.begin("flags",false);
-  preferences.putBool("sleep",true);
-  preferences.end();
-  server.send(201, F("text/json"),"Device Successfully In Deep Sleep");
-  delay(1000);
-  //set the time for this
-  ESP.deepSleep(3e7);
+
+  if(isAP(WiFi.localIP())==false)
+  {
+    String postBody = server.arg("plain");
+    DynamicJsonDocument doc(512);
+    DeserializationError parsingError = deserializeJson(doc, postBody);
+
+    //if there is error in the recieved json object
+    if (parsingError) {
+        String msg = parsingError.c_str();
+        server.send(400, F("text/json"),"Error in parsin json body!" + msg);
+    } 
+    //if the object is able to be parsed
+    else {
+      //create a json object
+        JsonObject postObj = doc.as<JsonObject>();
+        //if the method is post
+        if (server.method() == HTTP_POST) {
+          //if the post request has whats needed
+            if (postObj.containsKey("interval_time")) {
+              //set flags
+              preferences.begin("flags",false);
+              preferences.putBool("sleep",true);
+              preferences.end();
+              //calculate the recieved data for the time
+              String timeString = doc["interval_time"];
+              u32_t timeInDouble = timeString.toDouble();
+              //send the reply to the server
+              server.send(200, F("application/json"), "Going to Deep Sleep");
+              delay(1000);
+              //go to deep sleep
+              ESP.deepSleep(timeInDouble);
+               
+            }else {
+                DynamicJsonDocument doc(64);
+                doc["status"] = "KO";
+                doc["message"] = F("No data found, or incorrect!");
+ 
+                Serial.print(F("Stream..."));
+                String buf;
+                serializeJson(doc, buf);
+ 
+                server.send(400, F("application/json"), buf);
+                Serial.print(F("done."));
+            }
+        }
+    }
+  }
+  else{
+    server.send(403, F("text/json"),"Forbidden - Request can not be fulfilled");
+  }
 }
 //get sensor data
 void sensorData(){
@@ -402,7 +446,7 @@ void restServerRouting() {
     server.on("/", HTTP_GET,checkPulse);
     server.on(F("/reset"), HTTP_GET,reset);
     server.on(F("/connect"),HTTP_POST,wifiInfo);
-    server.on(F("/sleep"),HTTP_GET,enDeepSleep);
+    server.on(F("/sleep"),HTTP_POST,enDeepSleep);
     server.on(F("/sensors"),HTTP_GET,sensorData);
     server.on(F("/weather"),HTTP_GET,apiDataSend);
     server.on(F("/startSystem"),HTTP_POST,algorithmControl);
@@ -436,7 +480,7 @@ void setup() {
   configTime(0, 0, "pool.ntp.org");
   preferences.begin("settings");
   moisturePercentage = preferences.getInt("soilMoisture",60);
-  timerInterval = preferences.getDouble("timerInterval",3.6e+6);
+  timerInterval = preferences.getDouble("timerInterval",10000);
   activateSystem = preferences.getBool("activateSystem",false);
   preferences.end();
   Serial.println(moisturePercentage);
