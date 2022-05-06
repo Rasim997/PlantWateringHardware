@@ -16,7 +16,12 @@
 //defining sensorpins
 #define dhtSensor 33
 #define sSensor 32
-#define mRelay 26
+#define mRelay 18
+
+const int freq = 5000;
+const int ledChannel = 0;
+const int resolution = 8;
+
 //init library objects
 DHT dht(dhtSensor,DHT22);
 Preferences preferences;
@@ -391,7 +396,8 @@ void wateringAlgorithm(){
         //check if the pump is not already running
         if(Watering.state()==STOPPED){
           Watering.start();
-          digitalWrite(mRelay,LOW);
+          //digitalWrite(mRelay,LOW);
+          ledcWrite(ledChannel, 255);
           Serial.println("starting Watering");
         }
         //if the pump is running already
@@ -399,7 +405,8 @@ void wateringAlgorithm(){
           if(Watering.read()>=5000)
           {
             Watering.stop();
-            digitalWrite(mRelay,HIGH);
+            //digitalWrite(mRelay,HIGH);
+            ledcWrite(ledChannel, 0);
             Serial.println("Stopping Watering");
             WaitTimer.start();
           }
@@ -407,7 +414,8 @@ void wateringAlgorithm(){
       }
       else{
         Watering.stop();
-        digitalWrite(mRelay,LOW);
+        //digitalWrite(mRelay,LOW);
+        ledcWrite(ledChannel, 255);
         Serial.println("Stopping Watering");
         WaitTimer.start();
       }
@@ -420,7 +428,8 @@ void wateringAlgorithm(){
         if(map(analogRead(sSensor),3500,0,1,100)>=moisturePercentage){
           wateringFlag=false;
           Serial.println("Watering Stopped");
-          digitalWrite(mRelay,HIGH);
+          //digitalWrite(mRelay,HIGH);
+          ledcWrite(ledChannel, 0);
         }
       }
     }
@@ -456,8 +465,8 @@ void restServerRouting() {
 void setup() {
   Serial.begin(115200);
   dht.begin();
-  pinMode(mRelay,OUTPUT);
-  digitalWrite(mRelay,HIGH);
+  //pinMode(mRelay,OUTPUT);
+  //digitalWrite(mRelay,HIGH);
   preferences.begin("credentials", true);
   String ssid = preferences.getString("ssid","0");
   String pass = preferences.getString("password","0");
@@ -483,6 +492,13 @@ void setup() {
   timerInterval = preferences.getDouble("timerInterval",10000);
   activateSystem = preferences.getBool("activateSystem",false);
   preferences.end();
+
+
+  ledcSetup(ledChannel, freq, resolution);
+
+  ledcAttachPin(mRelay, ledChannel);
+  ledcWrite(ledChannel, 0);
+
   Serial.println(moisturePercentage);
   Serial.println(timerInterval);
 
