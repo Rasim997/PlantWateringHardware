@@ -1,6 +1,5 @@
 #include <Arduino.h>
 //wifi server libraries
-// #include <WiFiClient.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
@@ -465,8 +464,6 @@ void restServerRouting() {
 void setup() {
   Serial.begin(115200);
   dht.begin();
-  //pinMode(mRelay,OUTPUT);
-  //digitalWrite(mRelay,HIGH);
   preferences.begin("credentials", true);
   String ssid = preferences.getString("ssid","0");
   String pass = preferences.getString("password","0");
@@ -507,5 +504,4 @@ void setup() {
 void loop() {
   server.handleClient();
   wateringAlgorithm();
-  //Serial.println(map(analogRead(sSensor),3500,0,1,100));
 }
